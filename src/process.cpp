@@ -111,8 +111,8 @@ int ExportFilters(Net<float> *net, std::string output_folder,
 
 int Process(caffe_neural::ToolParam &tool_param, CommonSettings &settings) {
 
-  if (tool_param.train_size() <= settings.param_index) {
-    LOG(FATAL)<< "Train parameter index does not exist.";
+  if (tool_param.process_size() <= settings.param_index) {
+    LOG(FATAL)<< "Process parameter index does not exist.";
   }
 
   ProcessParam process_param = tool_param.process(settings.param_index);
