@@ -70,47 +70,11 @@ int Train(ToolParam &tool_param, CommonSettings &settings) {
   TrainImageProcessor image_processor(patch_size, nr_labels);
 
   if(input_param.has_preprocessor()) {
+    std::map<std::string, int> p;
+    p["padding_size"] = padding_size;
+    p["nr_labels"] = nr_labels;
 
-    PreprocessorParam preprocessor_param = input_param.preprocessor();
-
-    image_processor.SetBorderParams(input_param.has_padding_size(), padding_size / 2);
-    image_processor.SetRotationParams(preprocessor_param.has_rotation() && preprocessor_param.rotation());
-    image_processor.SetPatchMirrorParams(preprocessor_param.has_mirror() && preprocessor_param.mirror());
-    image_processor.SetNormalizationParams(preprocessor_param.has_normalization() && preprocessor_param.normalization());
-
-    if(preprocessor_param.has_label_consolidate()) {
-      LabelConsolidateParam label_consolidate_param = preprocessor_param.label_consolidate();
-      std::vector<int> con_labels;
-      for(int cl = 0; cl < label_consolidate_param.label_size(); ++ cl) {
-        con_labels.push_back(label_consolidate_param.label(cl));
-      }
-      image_processor.SetLabelConsolidateParams(preprocessor_param.has_label_consolidate(), con_labels);
-    }
-
-    if(preprocessor_param.has_histeq()) {
-      PrepHistEqParam histeq_param = preprocessor_param.histeq();
-      std::vector<float> label_boost(nr_labels, 1.0);
-      for(int i = 0; i < histeq_param.label_boost().size(); ++i) {
-        label_boost[i] = histeq_param.label_boost().Get(i);
-      }
-      image_processor.SetLabelHistEqParams(true, histeq_param.has_patch_prior()&&histeq_param.patch_prior(), histeq_param.has_masking()&&histeq_param.masking(), label_boost);
-    }
-
-    if(preprocessor_param.has_crop()) {
-      PrepCropParam crop_param = preprocessor_param.crop();
-      image_processor.SetCropParams(crop_param.has_imagecrop()?crop_param.imagecrop():0, crop_param.has_labelcrop()?crop_param.labelcrop():0);
-    }
-
-    if(preprocessor_param.has_clahe()) {
-      PrepClaheParam clahe_param = preprocessor_param.clahe();
-      image_processor.SetClaheParams(true, clahe_param.has_clip()?clahe_param.clip():4.0);
-    }
-
-    if(preprocessor_param.has_blur()) {
-      PrepBlurParam blur_param = preprocessor_param.blur();
-      image_processor.SetBlurParams(true, blur_param.has_mean()?blur_param.mean():0.0, blur_param.has_std()?blur_param.std():0.1, blur_param.has_ksize()?blur_param.ksize():5);
-    }
-
+    image_processor.SetUpParams(input_param, p);
   }
 
   if(!(input_param.has_raw_images() && input_param.has_label_images())) {

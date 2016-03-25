@@ -76,6 +76,8 @@ message PreprocessorParam {
   optional PrepBlurParam blur = 7;
   optional PrepDeformParam deform = 8;
   optional LabelConsolidateParam label_consolidate = 9;
+  optional bool scale = 10 [default = false];
+  optional bool translate = 11 [default = false];
 }
 
 message PrepCropParam {

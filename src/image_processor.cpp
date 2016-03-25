@@ -6,6 +6,7 @@
  */
 
 #include "image_processor.hpp"
+#include "process.hpp"
 #include <glog/logging.h>
 
 #include <omp.h>
@@ -305,7 +306,7 @@ void ImageProcessor::SetClaheParams(bool apply, float clip_limit) {
 
 void ImageProcessor::SetRotationParams(bool apply) {
   apply_rotation_ = apply;
-  rotation_rand_ = GetRandomOffset(0, 3);
+  rotation_rand_ = GetRandomOffset(0, 359);
 }
 void ImageProcessor::SetPatchMirrorParams(bool apply) {
   apply_patch_mirroring_ = apply;
@@ -323,6 +324,100 @@ void ImageProcessor::SetLabelHistEqParams(bool apply, bool patch_prior,
     label_mask_prob_rand_[i] = GetRandomUniform<float>(0.0, 1.0);
   }
   label_boost_ = label_boost;
+}
+
+void ImageProcessor::SetScaleParams(bool apply) {
+  apply_scaling_ = apply;
+  //Note that later it is mapped to 0,5 steps, manuelly.
+  //Do not forget to update this pice of code as well!!!
+  scale_rand_ = GetRandomUniform<float>(0.5, 2.5);
+}
+
+void ImageProcessor::SetTranslateParams(bool apply) {
+  apply_translate_ = apply;
+  trans_rand_ = GetRandomUniform(-10, 10);
+}
+
+void ImageProcessor::SetUpParams(InputParam &input_param, std::map<std::string, int> &params) {
+  PreprocessorParam preprocessor_param = input_param.preprocessor();
+
+  //unpack params
+  int padding_size = 0;
+  unsigned int nr_labels = 0;
+  if (params.count("padding_size") != 0)
+    padding_size = params.find("padding_size")->second;
+  else
+    LOG(INFO) << "Assume padding size = 0";
+  if (params.count("nr_labels") != 0)
+    nr_labels = static_cast<unsigned int>(params.find("nr_labels")->second);
+  else
+    LOG(INFO) << "Assume number of labels = 0";
+
+  this->SetBorderParams(input_param.has_padding_size(), padding_size / 2);
+  this->SetRotationParams(preprocessor_param.has_rotation() && preprocessor_param.rotation());
+  this->SetPatchMirrorParams(preprocessor_param.has_mirror() && preprocessor_param.mirror());
+  this->SetNormalizationParams(preprocessor_param.has_normalization() && preprocessor_param.normalization());
+  this->SetScaleParams(preprocessor_param.has_scale() && preprocessor_param.scale());
+  this->SetTranslateParams(preprocessor_param.has_translate() && preprocessor_param.translate());
+
+  if(preprocessor_param.has_label_consolidate()) {
+    LabelConsolidateParam label_consolidate_param = preprocessor_param.label_consolidate();
+    std::vector<int> con_labels;
+    for(int cl = 0; cl < label_consolidate_param.label_size(); ++ cl) {
+      con_labels.push_back(label_consolidate_param.label(cl));
+    }
+    this->SetLabelConsolidateParams(preprocessor_param.has_label_consolidate(), con_labels);
+  }
+
+  if(preprocessor_param.has_histeq()) {
+    PrepHistEqParam histeq_param = preprocessor_param.histeq();
+    std::vector<float> label_boost(nr_labels, 1.0);
+    for(int i = 0; i < histeq_param.label_boost().size(); ++i) {
+      label_boost[i] = histeq_param.label_boost().Get(i);
+    }
+    this->SetLabelHistEqParams(true, histeq_param.has_patch_prior()&&histeq_param.patch_prior(), histeq_param.has_masking()&&histeq_param.masking(), label_boost);
+  }
+
+  if(preprocessor_param.has_crop()) {
+    PrepCropParam crop_param = preprocessor_param.crop();
+    this->SetCropParams(crop_param.has_imagecrop()?crop_param.imagecrop():0, crop_param.has_labelcrop()?crop_param.labelcrop():0);
+  }
+
+  if(preprocessor_param.has_clahe()) {
+    PrepClaheParam clahe_param = preprocessor_param.clahe();
+    this->SetClaheParams(true, clahe_param.has_clip()?clahe_param.clip():4.0);
+  }
+
+  if(preprocessor_param.has_blur()) {
+    PrepBlurParam blur_param = preprocessor_param.blur();
+    this->SetBlurParams(true, blur_param.has_mean()?blur_param.mean():0.0, blur_param.has_std()?blur_param.std():0.1, blur_param.has_ksize()?blur_param.ksize():5);
+  }
+}
+
+cv::Mat ImageProcessor::scale(float scale) {
+  if ((scale >= 0.5) && (scale < 1.0))
+    scale = 0.5;
+  else if ((scale >= 1.5) && (scale <2.0))
+    scale = 1.5;
+  else if ((scale >= 2.0) && (scale < 2.5))
+    scale = 2.0;
+  else
+    scale = 1.0;
+
+  return (cv::Mat_<double>(3,3) << scale, 0, 0, 0, scale, 0, 0, 0, 1);
+}
+
+cv::Mat ImageProcessor::translate(double translate) {
+  return (cv::Mat_<double>(3,3) << 1, 0, translate, 0, 1, translate, 0, 0, 1);
+}
+
+cv::Mat ImageProcessor::rotate(cv::Mat& src, double angle) {
+  cv::Point pt = cv::Point(src.cols / 2, src.rows / 2);
+  cv::Mat r_33 = cv::Mat::eye(cv::Size(3,3), CV_64FC1);
+  cv::Mat r = cv::getRotationMatrix2D(pt, angle, 1.0);
+  r.copyTo(r_33(cv::Rect(0, 0, r.cols, r.rows)));
+  
+  return r_33;
 }
 
 long ImageProcessor::BinarySearchPatch(double offset) {
@@ -392,38 +487,32 @@ std::vector<cv::Mat> TrainImageProcessor::DrawPatchRandom() {
     label = mirror_label;
   }
 
+  std::vector<cv::Mat> trans_matrix;
+  
+  if (apply_scaling_) {
+    float  rand_scale = scale_rand_();
+    trans_matrix.push_back(scale(rand_scale).clone());
+  }
+
   if (apply_rotation_) {
+    int rand_angle = rotation_rand_();
+    trans_matrix.push_back(rotate(patch, rand_angle*1.0));
+  }
 
-    cv::Mat rotate_patch;
-    cv::Mat rotate_label;
-    cv::Mat tmp_patch;
-    cv::Mat tmp_label;
+  if (apply_translate_) {
+    int trans = trans_rand_();
+    trans_matrix.push_back(translate(trans));
+  }
+  
+  if (apply_scaling_ || apply_translate_ || apply_rotation_) {
+    std::random_shuffle(trans_matrix.begin(), trans_matrix.end());
 
-    switch (rotation_rand_()) {
-      case 0:
-        rotate_patch = patch;
-        rotate_label = label;
-        break;
-      case 1:
-        tmp_patch = patch.t();
-        tmp_label = label.t();
-        cv::flip(tmp_patch, rotate_patch, 1);
-        cv::flip(tmp_label, rotate_label, 1);
-        break;
-      case 2:
-        cv::flip(patch, rotate_patch, -1);
-        cv::flip(label, rotate_label, -1);
-        break;
-      case 3:
-        tmp_patch = patch.t();
-        tmp_label = label.t();
-        cv::flip(tmp_patch, rotate_patch, 0);
-        cv::flip(tmp_label, rotate_label, 0);
-        break;
-    }
+    cv::Mat final_trans_mat = trans_matrix[0];
+    for(int i = 1; i < trans_matrix.size(); ++i)
+      final_trans_mat = final_trans_mat * trans_matrix[i];
 
-    patch = rotate_patch;
-    label = rotate_label;
+    cv::warpAffine(patch, patch, final_trans_mat(cv::Rect(0, 0, 3, 2)), patch.size(), cv::INTER_LINEAR, cv::BORDER_REFLECT_101);
+    cv::warpAffine(label, label, final_trans_mat(cv::Rect(0, 0, 3, 2)), label.size(), cv::INTER_NEAREST, cv::BORDER_REFLECT_101);
 
   }
 

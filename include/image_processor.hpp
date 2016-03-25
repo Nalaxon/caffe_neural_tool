@@ -15,6 +15,8 @@
 
 namespace caffe_neural {
 
+class InputParam;
+
 class ImageProcessor {
  public:
   ImageProcessor(int patch_size, int nr_labels);
@@ -33,7 +35,13 @@ class ImageProcessor {
 
   void SetLabelHistEqParams(bool apply, bool patch_prior, bool mask_prob,
                             std::vector<float> label_boost);
+  void SetScaleParams(bool apply);
+  void SetTranslateParams(bool apply);
+  void SetUpParams(InputParam &input_param, std::map<std::string, int> &params);
 
+  cv::Mat scale(float scale);
+  cv::Mat rotate(cv::Mat& src, double angle);
+  cv::Mat translate(double translate);
   long BinarySearchPatch(double offset);
 
   void SetLabelConsolidateParams(bool apply, std::vector<int> labels);
@@ -81,6 +89,14 @@ class ImageProcessor {
   // Simple rotation parameters
   bool apply_rotation_ = false;
   std::function<unsigned int()> rotation_rand_;
+
+  // Simple scaling parameters
+  bool apply_scaling_ = false;
+  std::function<float()> scale_rand_;
+
+  // Simple translation parameters
+  bool apply_translate_ = false;
+  std::function<int()> trans_rand_;
 
   // Patch mirroring
   bool apply_patch_mirroring_ = false;

@@ -167,6 +167,8 @@ int Process(caffe_neural::ToolParam &tool_param, CommonSettings &settings) {
     image_processor.SetRotationParams(preprocessor_param.has_rotation() && preprocessor_param.rotation());
     image_processor.SetPatchMirrorParams(preprocessor_param.has_mirror() && preprocessor_param.mirror());
     image_processor.SetNormalizationParams(preprocessor_param.has_normalization() && preprocessor_param.normalization());
+    image_processor.SetScaleParams(preprocessor_param.has_scale() && preprocessor_param.scale());
+    image_processor.SetTranslateParams(preprocessor_param.has_translate() && preprocessor_param.translate());
 
     if(preprocessor_param.has_histeq()) {
       PrepHistEqParam histeq_param = preprocessor_param.histeq();
