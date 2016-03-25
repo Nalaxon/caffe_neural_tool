@@ -14,68 +14,23 @@
 
 namespace caffe_neural {
 
-int Train(ToolParam &tool_param, CommonSettings &settings) {
+typedef std::map<std::string, int> pmap;
 
-  if (tool_param.train_size() <= settings.param_index) {
-    LOG(FATAL)<< "Train parameter index does not exist.";
-  }
+void preload_process_images(TrainImageProcessor& image_processor, InputParam& input_param, pmap extra_param) {
+ //unpack params
+  unsigned int nr_channels = 0;
+  unsigned int nr_labels = 0;
+  if (extra_param.count("nr_channels") != 0)
+    nr_channels = static_cast<unsigned int>(extra_param.find("nr_channels")->second);
+  else
+    LOG(INFO) << "Assume number of channels = 0";
+  if (extra_param.count("nr_labels") != 0)
+    nr_labels = static_cast<unsigned int>(extra_param.find("nr_labels")->second);
+  else
+    LOG(INFO) << "Assume number of labels = 0";
 
-  TrainParam train_param = tool_param.train(settings.param_index);
-  InputParam input_param = train_param.input();
-
-  if(!(input_param.has_patch_size() && input_param.has_padding_size() && input_param.has_labels() && input_param.has_channels())) {
-    LOG(FATAL) << "Patch size, padding size, label count or channel count parameter missing.";
-  }
-  int patch_size = input_param.patch_size();
-  int padding_size = input_param.padding_size();
-  unsigned int nr_labels = input_param.labels();
-  unsigned int nr_channels = input_param.channels();
-
-  std::string proto_solver = "";
-  if(!train_param.has_solver()) {
-    LOG(FATAL) << "Solver prototxt file argument missing";
-  }
-
-  proto_solver = train_param.solver();
-
-  caffe::SolverParameter solver_param;
-  caffe::ReadProtoFromTextFileOrDie(proto_solver, &solver_param);
-
-  int test_interval = solver_param.has_test_interval()?solver_param.test_interval():-1;
-
-  shared_ptr<caffe::Solver<float> >
-        solver(caffe::SolverRegistry<float>::CreateSolver(solver_param));
-
-  if(train_param.has_solverstate()) {
-    // Continue from previous solverstate
-    const char* solver_state_c = train_param.solverstate().c_str();
-    solver->Restore(solver_state_c);
-  }
-
-  // Get handles to the test and train network of the Caffe solver
-  boost::shared_ptr<caffe::Net<float>> train_net = solver->net();
-  boost::shared_ptr<caffe::Net<float>> test_net;
-  if(solver->test_nets().size() > 0) {
-    test_net = solver->test_nets()[0];
-  }
-
-  // Overwrite label count from the desired count to the pre-consolidation count
-  if(input_param.has_preprocessor()) {
-    PreprocessorParam preprocessor_param = input_param.preprocessor();
-    if(preprocessor_param.has_label_consolidate()) {
-      nr_labels = preprocessor_param.label_consolidate().label_size();
-    }
-  }
-
-  TrainImageProcessor image_processor(patch_size, nr_labels);
-
-  if(input_param.has_preprocessor()) {
-    std::map<std::string, int> p;
-    p["padding_size"] = padding_size;
-    p["nr_labels"] = nr_labels;
-
-    image_processor.SetUpParams(input_param, p);
-  }
+  if ( input_param.has_preprocessor() )
+    image_processor.SetUpParams(input_param, extra_param);
 
   if(!(input_param.has_raw_images() && input_param.has_label_images())) {
     LOG(FATAL) << "Raw images or label images folder missing.";
@@ -143,6 +98,70 @@ int Train(ToolParam &tool_param, CommonSettings &settings) {
   }
 
   image_processor.Init();
+}
+
+int Train(ToolParam &tool_param, CommonSettings &settings) {
+
+  if (tool_param.train_size() <= settings.param_index) {
+    LOG(FATAL)<< "Train parameter index does not exist.";
+  }
+
+  TrainParam train_param = tool_param.train(settings.param_index);
+  InputParam input_param = train_param.input();
+
+  if(!(input_param.has_patch_size() && input_param.has_padding_size() && input_param.has_labels() && input_param.has_channels())) {
+    LOG(FATAL) << "Patch size, padding size, label count or channel count parameter missing.";
+  }
+  int patch_size = input_param.patch_size();
+  int padding_size = input_param.padding_size();
+  unsigned int nr_labels = input_param.labels();
+  unsigned int nr_channels = input_param.channels();
+
+  std::string proto_solver = "";
+  if(!train_param.has_solver()) {
+    LOG(FATAL) << "Solver prototxt file argument missing";
+  }
+
+  proto_solver = train_param.solver();
+
+  caffe::SolverParameter solver_param;
+  caffe::ReadProtoFromTextFileOrDie(proto_solver, &solver_param);
+
+  int test_interval = solver_param.has_test_interval()?solver_param.test_interval():-1;
+
+  shared_ptr<caffe::Solver<float> >
+        solver(caffe::SolverRegistry<float>::CreateSolver(solver_param));
+
+  if(train_param.has_solverstate()) {
+    // Continue from previous solverstate
+    const char* solver_state_c = train_param.solverstate().c_str();
+    solver->Restore(solver_state_c);
+  }
+
+  // Get handles to the test and train network of the Caffe solver
+  boost::shared_ptr<caffe::Net<float>> train_net = solver->net();
+  boost::shared_ptr<caffe::Net<float>> test_net;
+  if(solver->test_nets().size() > 0) {
+    test_net = solver->test_nets()[0];
+  }
+
+  // Overwrite label count from the desired count to the pre-consolidation count
+  if(input_param.has_preprocessor()) {
+    PreprocessorParam preprocessor_param = input_param.preprocessor();
+    if(preprocessor_param.has_label_consolidate()) {
+      nr_labels = preprocessor_param.label_consolidate().label_size();
+    }
+  }
+
+  TrainImageProcessor image_processor(patch_size, nr_labels);
+
+  pmap extra_param;
+  extra_param["nr_channels"] = nr_channels;
+  extra_param["nr_labels"] = nr_labels;
+  extra_param["padding_size"] = padding_size;
+
+  preload_process_images(image_processor, input_param, extra_param);
+
 
   std::vector<long> labelcounter(nr_labels + 1);
 
