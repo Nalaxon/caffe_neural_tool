@@ -40,7 +40,6 @@ void preload_process_images(TrainImageProcessor& image_processor, InputParam& in
 
   int error;
   std::vector<std::vector<bofs::path>> training_set = LoadTrainingSetItems(filetypes, input_param.raw_images(),input_param.label_images(),&error);
-
   unsigned int ijsum = 0;
   // Preload and preprocess all images
   for (unsigned int i = 0; i < training_set.size(); ++i) {
@@ -61,7 +60,6 @@ void preload_process_images(TrainImageProcessor& image_processor, InputParam& in
           CV_LOAD_IMAGE_COLOR);
       raw_stack.push_back(raw_image);
     }
-
     for(unsigned int k = 0; k < training_item.size() - 1; ++k) {
       std::string type = bofs::extension(training_item[k+1]);
       std::transform(type.begin(), type.end(), type.begin(), ::tolower);
@@ -76,7 +74,6 @@ void preload_process_images(TrainImageProcessor& image_processor, InputParam& in
         labels_stack[k] = label_stack;
       }
     }
-
     for (unsigned int j = 0; j < raw_stack.size(); ++j) {
       std::vector<cv::Mat> label_images;
       for(unsigned int k = 0; k < labels_stack.size(); ++k) {
@@ -91,13 +88,13 @@ void preload_process_images(TrainImageProcessor& image_processor, InputParam& in
         }
         label_images.push_back(clabel);
       }
-
       image_processor.SubmitImage(raw_stack[j], ijsum, label_images);
       ++ijsum;
     }
   }
 
   image_processor.Init();
+
 }
 
 int Train(ToolParam &tool_param, CommonSettings &settings) {
@@ -154,6 +151,7 @@ int Train(ToolParam &tool_param, CommonSettings &settings) {
   }
 
   TrainImageProcessor image_processor(patch_size, nr_labels);
+  TrainImageProcessor test_img_processor(patch_size, nr_labels);
 
   pmap extra_param;
   extra_param["nr_channels"] = nr_channels;
@@ -161,7 +159,11 @@ int Train(ToolParam &tool_param, CommonSettings &settings) {
   extra_param["padding_size"] = padding_size;
 
   preload_process_images(image_processor, input_param, extra_param);
+  if (test_interval != -1) {
+    InputParam test_input_param = tool_param.process(settings.param_index).input();
 
+    preload_process_images(test_img_processor, test_input_param, extra_param);
+  } 
 
   std::vector<long> labelcounter(nr_labels + 1);
 
@@ -169,7 +171,16 @@ int Train(ToolParam &tool_param, CommonSettings &settings) {
 
   // Do the training
   for (int i = 0; i < train_iters; ++i) {
-    std::vector<cv::Mat> patch = image_processor.DrawPatchRandom();
+    std::vector<cv::Mat> patch;
+    boost::shared_ptr<caffe::Net<float>> current_net;
+    //Prepare test images for test stage
+    if(test_interval > -1 && i % test_interval == 0) {
+      patch = test_img_processor.DrawPatchRandom();
+      current_net = test_net;
+    } else {
+      patch = image_processor.DrawPatchRandom();
+      current_net = train_net;
+    }
 
     std::vector<cv::Mat> images;
     std::vector<cv::Mat> labels;
@@ -222,13 +233,13 @@ int Train(ToolParam &tool_param, CommonSettings &settings) {
     std::vector<int_tp> lalabels;
     lalabels.push_back(0);
     boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
-        train_net->layers()[0])->AddMatVector(labels, lalabels);
+        current_net->layers()[1])->AddMatVector(labels, lalabels);
 
     // The images
     std::vector<int_tp> imlabels;
     imlabels.push_back(0);
     boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
-        train_net->layers()[1])->AddMatVector(images, imlabels);
+        current_net->layers()[0])->AddMatVector(images, imlabels);
 
     solver->Step(1L);
 
