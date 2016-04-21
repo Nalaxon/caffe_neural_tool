@@ -157,13 +157,15 @@ int Train(ToolParam &tool_param, CommonSettings &settings) {
   extra_param["nr_channels"] = nr_channels;
   extra_param["nr_labels"] = nr_labels;
   extra_param["padding_size"] = padding_size;
-
   preload_process_images(image_processor, input_param, extra_param);
+
   if (test_interval != -1) {
     InputParam test_input_param = tool_param.process(settings.param_index).input();
+    extra_param["padding_size"] = test_input_param.padding_size();
 
     preload_process_images(test_img_processor, test_input_param, extra_param);
   } 
+
 
   std::vector<long> labelcounter(nr_labels + 1);
 
@@ -171,23 +173,34 @@ int Train(ToolParam &tool_param, CommonSettings &settings) {
 
   // Do the training
   for (int i = 0; i < train_iters; ++i) {
+    std::string debug_string;
     std::vector<cv::Mat> patch;
-    boost::shared_ptr<caffe::Net<float>> current_net;
-    //Prepare test images for test stage
-    if(test_interval > -1 && i % test_interval == 0) {
-      patch = test_img_processor.DrawPatchRandom();
-      current_net = test_net;
-    } else {
-      patch = image_processor.DrawPatchRandom();
-      current_net = train_net;
-    }
-
-    std::vector<cv::Mat> images;
-    std::vector<cv::Mat> labels;
-
+    std::vector<cv::Mat> images, images_test;
+    std::vector<cv::Mat> labels, labels_test;
+ 
+    patch = image_processor.DrawPatchRandom();
     images.push_back(patch[0]);
     labels.push_back(patch[1]);
 
+    //Prepare test images for test stage
+    if(test_interval > -1 && i % test_interval == 0) {
+      //patch = test_img_processor.DrawPatchRandom();
+      InputParam test_input_param = tool_param.process(settings.param_index).input();
+      int offset = test_input_param.padding_size();
+      int size = test_input_param.patch_size();
+      int padding = test_input_param.padding_size();
+      cv::Rect img_roi = cv::Rect(offset / 2, offset / 2, size + padding, size + padding);
+      cv::Rect label_roi = cv::Rect(offset / 2, offset / 2, size, size);
+      images_test.push_back(cv::Mat(test_img_processor.raw_images()[0], img_roi).clone());
+      labels_test.push_back(cv::Mat(test_img_processor.label_images()[0], label_roi).clone());
+    }
+    
+//    std::cout << "image.size(): " << patch[0].size() << (patch.size() > 2)?(std::cout << " vs. " << patch[2].size() << std::endl):(std::cout << std::endl);
+//    std::cout << "lables.size(): " << patch[1].size() << (patch.size() > 2)?(std::cout << " vs. " << patch[3].size() << std::endl):(std::cout << std::endl);
+
+    
+
+    
     // TODO: Only enable in debug or statistics mode
     for (int y = 0; y < patch_size; ++y) {
       for (int x = 0; x < patch_size; ++x) {
@@ -228,21 +241,30 @@ int Train(ToolParam &tool_param, CommonSettings &settings) {
       cv::imshow(OCVDBGW, patchclone);
       cv::waitKey(10);
     }
-
+    
     // The labels
     std::vector<int_tp> lalabels;
     lalabels.push_back(0);
     boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
-        current_net->layers()[1])->AddMatVector(labels, lalabels);
+        train_net->layers()[0])->AddMatVector(labels, lalabels);
 
     // The images
     std::vector<int_tp> imlabels;
     imlabels.push_back(0);
     boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
-        current_net->layers()[0])->AddMatVector(images, imlabels);
+        train_net->layers()[1])->AddMatVector(images, imlabels);
+
+    if(test_interval > -1 && i % test_interval == 0) {
+      // The labels
+      boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
+          test_net->layers()[0])->AddMatVector(labels_test, lalabels);
+
+      // The images
+      boost::dynamic_pointer_cast<caffe::MemoryDataLayer<float>>(
+          test_net->layers()[1])->AddMatVector(images_test, imlabels);
+    }
 
     solver->Step(1L);
-
     if (train_param.has_filter_output()) {
       FilterOutputParam filter_param = train_param.filter_output();
       if (filter_param.has_output_filters() && filter_param.output_filters() && filter_param.has_output()) {
